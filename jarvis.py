@@ -41,7 +41,6 @@ used as a fallback on first run. Up to 8 keys, instant automatic failover.
 """
 
 import os
-import tempfile
 import sys
 import re
 import json
@@ -51,6 +50,7 @@ import sqlite3
 import threading
 import asyncio
 import subprocess
+import shutil
 import webbrowser
 import ctypes
 import logging
@@ -61,6 +61,7 @@ except ImportError:
     winsound = None
 
 IS_WINDOWS = sys.platform.startswith("win")
+BASE_DIR = os.path.dirname(sys.executable) if getattr(sys, "frozen", False) else os.path.dirname(os.path.abspath(__file__))
 
 def beep(freq: int, dur_ms: int):
     """Cross-platform-safe beep. No-op if unsupported (non-Windows, or winsound missing)."""
@@ -76,7 +77,7 @@ from PIL import Image, ImageGrab, ImageDraw
 # 0. LOGGING (essential once packaged as a --windowed .exe — that build has
 #    NO console, so print() output is otherwise completely invisible)
 # ==========================================
-LOG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "jarvis.log")
+LOG_PATH = os.path.join(BASE_DIR, "jarvis.log")
 logger = logging.getLogger("jarvis")
 logger.setLevel(logging.INFO)
 try:
@@ -140,7 +141,7 @@ except Exception:
 # ==========================================
 # 1. LOCAL CONFIG (per-user name + API keys)
 # ==========================================
-CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "jarvis_config.json")
+CONFIG_PATH = os.path.join(BASE_DIR, "jarvis_config.json")
 MAX_KEYS = 8
 
 def load_config() -> dict:
@@ -175,7 +176,7 @@ else:
     _env_keys = os.environ.get("GEMINI_API_KEYS", "")
     GEMINI_KEYS = [k.strip() for k in _env_keys.split(",") if k.strip()]
 
-DB_PATH = "jarvis_memory.db"
+DB_PATH = os.path.join(BASE_DIR, "jarvis_memory.db")
 gemini_key_index = 0
 
 VOICE_PROFILES = {
@@ -274,7 +275,7 @@ JARVIS_QUOTES = [
 # ==========================================
 # 1b. APP ICON (generated in code — no external image file needed)
 # ==========================================
-ICON_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "jarvis_icon.ico")
+ICON_PATH = os.path.join(BASE_DIR, "jarvis_icon.ico")
 
 def ensure_app_icon() -> str:
     """Draws a simple reactor-style icon and saves it as a multi-size .ico
@@ -305,7 +306,7 @@ def ensure_app_icon() -> str:
 # 2. SQLITE DATABASE
 # ==========================================
 def init_db():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=10)
     cur = conn.cursor()
     cur.execute("""CREATE TABLE IF NOT EXISTS sessions (
             id TEXT PRIMARY KEY, title TEXT, created_at REAL, is_pinned INTEGER DEFAULT 0)""")
@@ -325,28 +326,28 @@ def init_db():
     conn.close()
 
 def db_save_session(session_id, title, created_at, is_pinned=0):
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=10)
     cur = conn.cursor()
     cur.execute("INSERT OR REPLACE INTO sessions VALUES (?, ?, ?, ?)", (session_id, title, created_at, is_pinned))
     conn.commit()
     conn.close()
 
 def db_update_session_title(session_id, title):
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=10)
     cur = conn.cursor()
     cur.execute("UPDATE sessions SET title = ? WHERE id = ?", (title, session_id))
     conn.commit()
     conn.close()
 
 def db_toggle_pin(session_id, is_pinned):
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=10)
     cur = conn.cursor()
     cur.execute("UPDATE sessions SET is_pinned = ? WHERE id = ?", (is_pinned, session_id))
     conn.commit()
     conn.close()
 
 def db_delete_session(session_id):
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=10)
     cur = conn.cursor()
     cur.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
     cur.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
@@ -354,7 +355,7 @@ def db_delete_session(session_id):
     conn.close()
 
 def db_save_message(session_id, role, content, attachment=""):
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=10)
     cur = conn.cursor()
     cur.execute("INSERT INTO messages (session_id, role, content, attachment, timestamp) VALUES (?, ?, ?, ?, ?)",
                 (session_id, role, content, attachment or "", time.time()))
@@ -362,7 +363,7 @@ def db_save_message(session_id, role, content, attachment=""):
     conn.close()
 
 def db_load_sessions():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=10)
     cur = conn.cursor()
     cur.execute("SELECT id, title, created_at, is_pinned FROM sessions ORDER BY is_pinned DESC, created_at DESC")
     rows = cur.fetchall()
@@ -370,7 +371,7 @@ def db_load_sessions():
     return rows
 
 def db_load_messages(session_id):
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=10)
     cur = conn.cursor()
     cur.execute("SELECT role, content, attachment FROM messages WHERE session_id = ? ORDER BY id ASC", (session_id,))
     rows = cur.fetchall()
@@ -378,7 +379,7 @@ def db_load_messages(session_id):
     return rows
 
 def db_recent_activity(limit=6):
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=10)
     cur = conn.cursor()
     cur.execute("SELECT role, content, timestamp FROM messages WHERE role='user' ORDER BY id DESC LIMIT ?", (limit,))
     rows = cur.fetchall()
@@ -386,7 +387,7 @@ def db_recent_activity(limit=6):
     return rows
 
 def db_add_reminder(label, seconds) -> int:
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=10)
     cur = conn.cursor()
     now = time.time()
     cur.execute("INSERT INTO reminders (label, seconds, created_at, fire_at, completed) VALUES (?, ?, ?, ?, 0)",
@@ -397,21 +398,21 @@ def db_add_reminder(label, seconds) -> int:
     return rid
 
 def db_mark_reminder_done(rid):
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=10)
     cur = conn.cursor()
     cur.execute("UPDATE reminders SET completed = 1 WHERE id = ?", (rid,))
     conn.commit()
     conn.close()
 
 def db_delete_reminder(rid):
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=10)
     cur = conn.cursor()
     cur.execute("DELETE FROM reminders WHERE id = ?", (rid,))
     conn.commit()
     conn.close()
 
 def db_load_reminders():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=10)
     cur = conn.cursor()
     cur.execute("SELECT id, label, seconds, created_at, fire_at, completed FROM reminders ORDER BY fire_at ASC")
     rows = cur.fetchall()
@@ -419,7 +420,7 @@ def db_load_reminders():
     return rows
 
 def db_add_memory_fact(fact: str) -> int:
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=10)
     cur = conn.cursor()
     cur.execute("INSERT INTO memory_facts (fact, created_at) VALUES (?, ?)", (fact.strip(), time.time()))
     fid = cur.lastrowid
@@ -428,7 +429,7 @@ def db_add_memory_fact(fact: str) -> int:
     return fid
 
 def db_load_memory_facts():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=10)
     cur = conn.cursor()
     cur.execute("SELECT id, fact, created_at FROM memory_facts ORDER BY created_at DESC")
     rows = cur.fetchall()
@@ -436,7 +437,7 @@ def db_load_memory_facts():
     return rows
 
 def db_delete_memory_fact(fid: int):
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=10)
     cur = conn.cursor()
     cur.execute("DELETE FROM memory_facts WHERE id = ?", (fid,))
     conn.commit()
@@ -731,7 +732,7 @@ def generate_qr_code(data_or_url: str = "https://google.com") -> str:
         qr_api_url = f"https://api.qrserver.com/v1/create-qr-code/?size=350x350&data={encoded}"
         img_res = requests.get(qr_api_url, timeout=8)
         if img_res.status_code == 200:
-            qr_filename = os.path.join(os.path.dirname(os.path.abspath(__file__)), "jarvis_qr_code.png")
+            qr_filename = os.path.join(BASE_DIR, "jarvis_qr_code.png")
             with open(qr_filename, "wb") as f:
                 f.write(img_res.content)
             return f"QR_FILE:{qr_filename}"
@@ -780,7 +781,7 @@ def take_screenshot(action: str = "capture") -> str:
     """Captures desktop screenshot and saves it locally. Returns an SS_FILE: marker
     so the chat UI renders it inline instead of shelling out to an external viewer."""
     try:
-        base_dir = os.path.dirname(os.path.abspath(__file__))
+        base_dir = BASE_DIR
         screen_file = os.path.join(base_dir, f"screenshot_{int(time.time())}.png")
         img = ImageGrab.grab()
         img.save(screen_file)
@@ -801,7 +802,7 @@ def close_application(app_name: str) -> str:
         return "Closing applications this way is only supported on Windows."
     target = proc_map.get(clean, f"{clean}.exe")
     try:
-        res = subprocess.run(f"taskkill /f /im {target}", shell=True, capture_output=True, text=True)
+        res = subprocess.run(["taskkill", "/f", "/im", target], shell=False, capture_output=True, text=True)
         if res.returncode == 0:
             return f"Successfully closed {target}."
         return f"No active process found for '{app_name}' ({target})."
@@ -952,7 +953,7 @@ def create_excel_file(filename: str, csv_data: str) -> str:
         clean_name = re.sub(r"[^a-zA-Z0-9_\- ]", "", filename.strip()) or "jarvis_report"
         if not clean_name.lower().endswith(".xlsx"):
             clean_name += ".xlsx"
-        base_dir = os.path.dirname(os.path.abspath(__file__))
+        base_dir = BASE_DIR
         path = os.path.join(base_dir, clean_name)
         rows = list(_csv.reader(_io.StringIO(csv_data.strip())))
         if not rows:
@@ -1022,8 +1023,8 @@ def type_in_ui_field(window_title: str, control_name: str, text: str) -> str:
         return f"UI Automation Error: {e}"
 
 # ---- Self-Evolution: AI-proposed, human-approved custom tools ----
-CUSTOM_TOOLS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "custom_tools")
-CUSTOM_TOOLS_REGISTRY_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "custom_tools_registry.json")
+CUSTOM_TOOLS_DIR = os.path.join(BASE_DIR, "custom_tools")
+CUSTOM_TOOLS_REGISTRY_PATH = os.path.join(BASE_DIR, "custom_tools_registry.json")
 custom_tools_runtime = {}  # name -> callable, loaded at startup + whenever a new one is approved
 
 def _load_one_custom_tool(name: str):
@@ -1127,8 +1128,8 @@ def spawn_parallel_agents(subtasks: str) -> str:
     lines = [f"[Agent {i + 1}: {parts[i][:40]}] → {results.get(i, '(no result)')}" for i in range(len(parts))]
     return "Parallel task swarm complete:\n\n" + "\n\n".join(lines)
 
-GOOGLE_CREDENTIALS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "credentials.json")
-GOOGLE_TOKEN_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "token.json")
+GOOGLE_CREDENTIALS_PATH = os.path.join(BASE_DIR, "credentials.json")
+GOOGLE_TOKEN_PATH = os.path.join(BASE_DIR, "token.json")
 GOOGLE_SCOPES = [
     "https://www.googleapis.com/auth/gmail.readonly",
     "https://www.googleapis.com/auth/gmail.send",
@@ -1373,7 +1374,7 @@ def generate_ai_image(prompt: str) -> str:
             parts = res.candidates[0].content.parts if res.candidates else []
             for part in parts:
                 if getattr(part, "inline_data", None) and part.inline_data.data:
-                    base_dir = os.path.dirname(os.path.abspath(__file__))
+                    base_dir = BASE_DIR
                     img_path = os.path.join(base_dir, f"jarvis_image_{int(time.time())}.png")
                     with open(img_path, "wb") as f:
                         f.write(part.inline_data.data)
@@ -1404,7 +1405,7 @@ def generate_ai_image(prompt: str) -> str:
 #     hard step limits, confirmation before anything risky (pay / place order / delete),
 #     and it never types passwords, OTPs or card numbers.
 CDP_PORT = 9222
-WEB_PROFILE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "jarvis_chrome_profile")
+WEB_PROFILE_DIR = os.path.join(BASE_DIR, "jarvis_chrome_profile")
 _cdp_proc = {"p": None}
 
 try:
@@ -1963,7 +1964,7 @@ def _safe_remove(path):
 def _cleanup_old_voice_files():
     """Remove leftover voice_*.mp3 from older builds / crashes."""
     try:
-        base = os.path.dirname(os.path.abspath(__file__))
+        base = BASE_DIR
         for fn in os.listdir(base):
             if fn.startswith("voice_") and fn.endswith(".mp3"):
                 _safe_remove(os.path.join(base, fn))
@@ -2024,24 +2025,26 @@ def speak_text_sync(text: str):
     stop_voice()
     if not edge_tts or not pygame:
         return
+    audio_file = None
     try:
         clean = prepare_speech_text(text)
-        audio_file = os.path.join(tempfile.gettempdir(), f"jarvis_voice_{int(time.time()*1000)}.mp3")
+        audio_file = os.path.join(BASE_DIR, f"voice_{int(time.time()*1000)}.mp3")
         synthesize_speech(clean, audio_file)
         pygame.mixer.music.load(audio_file)
         pygame.mixer.music.play()
         while pygame.mixer.music.get_busy():
             pygame.time.Clock().tick(10)
-        try:
-            pygame.mixer.music.unload()
-        except Exception:
-            pass
-        _safe_remove(audio_file)
     except Exception as e:
         if not _tts_warned["net"]:
             log_error(f"Orb TTS error (using offline voice; check internet/DNS): {e}")
             _tts_warned["net"] = True
         _sapi_speak(text)
+    finally:
+        try:
+            pygame.mixer.music.unload()
+        except Exception:
+            pass
+        _safe_remove(audio_file)
 
 
 # ==========================================
@@ -2195,12 +2198,12 @@ def run_health_checks(emit):
         missing = [pkg for mod, pkg in names.items() if importlib.util.find_spec(mod) is None]
         return ("ok", "All optional packages present", "") if not missing else ("warn", "Missing: " + ", ".join(missing), "pip install -r requirements.txt")
     def c_storage():
-        base = os.path.dirname(os.path.abspath(__file__))
+        base = BASE_DIR
         test = os.path.join(base, ".jv_write_test")
         with open(test, "w") as f:
             f.write("ok")
         os.remove(test)
-        conn = sqlite3.connect(DB_PATH); conn.execute("SELECT 1"); conn.close()
+        conn = sqlite3.connect(DB_PATH, timeout=10); conn.execute("SELECT 1"); conn.close()
         return "ok", "App folder writable · memory database OK", ""
     def c_perm():
         return ("ok", "System automation permission is ON", "") if is_system_automation_enabled() else \
@@ -2406,13 +2409,12 @@ def toggle_voice(text: str, btn: QPushButton):
     btn.setText("⏹ Playing...")
 
     def _worker():
+        audio_file = None
         try:
             clean = prepare_speech_text(text)
-            audio_file = os.path.join(tempfile.gettempdir(), f"jarvis_voice_{int(time.time()*1000)}.mp3")
+            audio_file = os.path.join(BASE_DIR, f"voice_{int(time.time()*1000)}.mp3")
             synthesize_speech(clean, audio_file)
             if not audio_state["is_playing"] or audio_state["task_id"] != current_task:
-                if os.path.exists(audio_file):
-                    os.remove(audio_file)
                 return
             pygame.mixer.music.load(audio_file)
             pygame.mixer.music.play()
@@ -2423,13 +2425,13 @@ def toggle_voice(text: str, btn: QPushButton):
             if audio_state["task_id"] == current_task:
                 _sapi_speak(text)
         finally:
-            if audio_state["task_id"] == current_task:
-                stop_voice()
             try:
                 pygame.mixer.music.unload()
             except Exception:
                 pass
             _safe_remove(audio_file)
+            if audio_state["task_id"] == current_task:
+                stop_voice()
 
     threading.Thread(target=_worker, daemon=True).start()
 
@@ -2918,7 +2920,10 @@ class CodeCard(QFrame):
 
         def _exec():
             try:
-                proc = subprocess.run([sys.executable, "-c", self.code], capture_output=True, text=True, timeout=12)
+                py_exec = sys.executable
+                if getattr(sys, "frozen", False):
+                    py_exec = shutil.which("python") or shutil.which("py") or sys.executable
+                proc = subprocess.run([py_exec, "-c", self.code], capture_output=True, text=True, timeout=12)
                 out = proc.stdout
                 err = proc.stderr
                 res = (out or "") + (f"STDERR:\n{err}" if err else "")
