@@ -1,0 +1,34 @@
+# J.A.R.V.I.S. — Python 3.12 (Windows 10/11)
+# Install:  pip install -r requirements.txt
+PyQt6>=6.6
+pillow>=10.0
+requests>=2.31
+pygame>=2.5
+edge-tts>=6.1
+keyboard>=0.13
+google-genai>=1.0
+SpeechRecognition>=3.10
+PyAudio>=0.2.14   # microphone input for voice commands / wake word
+psutil>=5.9
+pyautogui>=0.9
+pywhatkit>=5.4
+pypdf>=4.0
+openpyxl>=3.1.2
+
+# Web automation (uses your installed Chrome — no browser download needed)
+playwright>=1.45
+
+# Google Workspace (Gmail / Drive / Docs / Calendar / YouTube)
+google-auth>=2.23
+google-auth-oauthlib>=1.1
+google-auth-httplib2>=0.1
+google-api-python-client>=2.100
+
+# Windows-only (volume, brightness, UI automation)
+screen_brightness_control>=0.22; sys_platform == "win32"
+pycaw>=20230407; sys_platform == "win32"
+comtypes>=1.2; sys_platform == "win32"
+uiautomation>=2.0.19; sys_platform == "win32"
+
+# Only needed to build JARVIS.exe
+pyinstaller>=6.3
