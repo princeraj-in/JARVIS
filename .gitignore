@@ -1,0 +1,53 @@
+# ============================================================
+# J.A.R.V.I.S. — Git Ignore Rules
+# ============================================================
+
+# 1. Secrets & OAuth Credentials (NEVER upload)
+credentials.json
+token.json
+jarvis_config.json
+*.env
+.env
+.env.*
+
+# 2. Local Databases & User State
+*.db
+*.db-journal
+*.db-wal
+*.sqlite
+*.sqlite3
+jarvis_chrome_profile/
+custom_tools/
+custom_tools_registry.json
+
+# 3. Runtime Logs & Generated Media
+jarvis.log
+jarvis.log.*
+*.log
+jarvis_icon.ico
+voice_*.mp3
+screenshot_*.png
+live_sight_*.png
+jarvis_image_*.png
+jarvis_qr_code.png
+
+# 4. Python Bytecode & Virtual Environments
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+env/
+ENV/
+
+# 5. PyInstaller / Packaging Artifacts
+build/
+dist/
+*.spec
+*.manifest
+
+# 6. IDE & OS Metadata
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
